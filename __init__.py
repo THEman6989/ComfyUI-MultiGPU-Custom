@@ -177,6 +177,7 @@ _aimdo_initialized_devices = set()
 if isinstance(current_device, torch.device) and current_device.type == "cuda" and current_device.index is not None:
     _aimdo_initialized_devices.add(current_device.index)
 _aimdo_readiness_cache = {}
+_aimdo_readiness_warning_keys = set()
 _aimdo_legacy_fallback_devices = set()
 
 def set_current_device(device):
@@ -340,14 +341,17 @@ def _aimdo_device_ready(device):
     target_device = _coerce_torch_device(device)
     if target_device is None or target_device.type != "cuda" or target_device.index is None:
         return False
-    if target_device.index in _aimdo_readiness_cache:
-        return _aimdo_readiness_cache[target_device.index]
+    if _aimdo_readiness_cache.get(target_device.index) is True:
+        return True
 
     try:
         from comfy_aimdo import control as aimdo_control
         get_devctx = getattr(aimdo_control, "get_devctx", None)
         if not callable(get_devctx):
-            logger.warning("[MultiGPU] comfy_aimdo.control.get_devctx missing; device readiness is unverified")
+            warning_key = (target_device.index, "missing_get_devctx")
+            if warning_key not in _aimdo_readiness_warning_keys:
+                logger.warning("[MultiGPU] comfy_aimdo.control.get_devctx missing; device readiness is unverified")
+                _aimdo_readiness_warning_keys.add(warning_key)
             _aimdo_readiness_cache[target_device.index] = None
             return None
         get_devctx(target_device.index)
@@ -357,11 +361,17 @@ def _aimdo_device_ready(device):
         if "not initialized" in str(exc).lower():
             _aimdo_readiness_cache[target_device.index] = False
             return False
-        logger.warning(f"[MultiGPU] Unexpected comfy_aimdo readiness failure for {target_device}: {exc}")
+        warning_key = (target_device.index, str(exc))
+        if warning_key not in _aimdo_readiness_warning_keys:
+            logger.warning(f"[MultiGPU] Unexpected comfy_aimdo readiness failure for {target_device}: {exc}")
+            _aimdo_readiness_warning_keys.add(warning_key)
         _aimdo_readiness_cache[target_device.index] = None
         return None
     except Exception as exc:
-        logger.warning(f"[MultiGPU] Unexpected comfy_aimdo readiness failure for {target_device}: {exc}")
+        warning_key = (target_device.index, str(exc))
+        if warning_key not in _aimdo_readiness_warning_keys:
+            logger.warning(f"[MultiGPU] Unexpected comfy_aimdo readiness failure for {target_device}: {exc}")
+            _aimdo_readiness_warning_keys.add(warning_key)
         _aimdo_readiness_cache[target_device.index] = None
         return None
 
