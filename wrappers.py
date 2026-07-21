@@ -116,8 +116,9 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
                 model_to_check = out[0].patcher
 
             if model_to_check and full_allocation:
-                inner_model = model_to_check.model
-                inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
+                meta = {"full_allocation": full_allocation}
+                model_to_check._distorch_v2_meta = meta
+                model_to_check.model._distorch_v2_meta = meta
 
             logger.info(f"[MultiGPU DisTorch V2] Full allocation string: {full_allocation}")
 
@@ -227,8 +228,9 @@ def override_class_with_distorch_gguf(cls):
                 model_to_check = out[0].patcher
 
             if model_to_check and full_allocation:
-                inner_model = model_to_check.model
-                inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
+                meta = {"full_allocation": full_allocation}
+                model_to_check._distorch_v2_meta = meta
+                model_to_check.model._distorch_v2_meta = meta
             try:
                 return out
             finally:
@@ -292,8 +294,9 @@ def override_class_with_distorch_gguf_v2(cls):
                 model_to_check = out[0].patcher
 
             if model_to_check and full_allocation:
-                inner_model = model_to_check.model
-                inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
+                meta = {"full_allocation": full_allocation}
+                model_to_check._distorch_v2_meta = meta
+                model_to_check.model._distorch_v2_meta = meta
             try:
                 return out
             finally:
@@ -359,8 +362,9 @@ def override_class_with_distorch_clip(cls):
                 model_to_check = out[0].patcher
 
             if model_to_check and full_allocation:
-                inner_model = model_to_check.model
-                inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
+                meta = {"full_allocation": full_allocation}
+                model_to_check._distorch_v2_meta = meta
+                model_to_check.model._distorch_v2_meta = meta
             try:
                 return out
             finally:
@@ -426,8 +430,9 @@ def override_class_with_distorch_clip_no_device(cls):
                 model_to_check = out[0].patcher
 
             if model_to_check and full_allocation:
-                inner_model = model_to_check.model
-                inner_model._distorch_v2_meta = {"full_allocation": full_allocation}
+                meta = {"full_allocation": full_allocation}
+                model_to_check._distorch_v2_meta = meta
+                model_to_check.model._distorch_v2_meta = meta
             try:
                 return out
             finally:

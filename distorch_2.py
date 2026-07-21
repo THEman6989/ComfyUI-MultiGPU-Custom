@@ -31,6 +31,25 @@ def unpack_load_item(item):
 
 def register_patched_safetensor_modelpatcher():
     """Register and patch the ModelPatcher for distributed safetensor loading"""
+    # ComfyUI's lora_compute_dtype currently assumes every target is CUDA and
+    # calls torch.cuda.get_device_properties(device).  DisTorch can patch CPU-
+    # assigned blocks directly, so provide the missing CPU branch while leaving
+    # CUDA and other backends on the original implementation.
+    lora_compute_dtype = mm.lora_compute_dtype
+    if not getattr(lora_compute_dtype, "_distorch_cpu_safe", False):
+        original_lora_compute_dtype = lora_compute_dtype
+
+        def lora_compute_dtype_cpu_safe(device):
+            target = torch.device(device)
+            if target.type == "cpu":
+                return torch.float32
+            return original_lora_compute_dtype(device)
+
+        setattr(lora_compute_dtype_cpu_safe, "_distorch_cpu_safe", True)
+        setattr(lora_compute_dtype_cpu_safe, "_distorch_original", original_lora_compute_dtype)
+        mm.lora_compute_dtype = lora_compute_dtype_cpu_safe
+        logger.info("[MultiGPU DisTorch V2] Installed CPU-safe LoRA compute dtype handler")
+
     # Patch ComfyUI's ModelPatcher
     if not hasattr(comfy.model_patcher.ModelPatcher, '_distorch_patched'):
 
@@ -277,25 +296,28 @@ def register_patched_safetensor_modelpatcher():
                     mem_counter += module_size
                     continue
 
-                # Step 1: Write block/tensor to compute device first
-                module_object.to(device_to)
+                block_target_device = device_assignments['block_assignments'].get(module_name, device_to)
 
-                # Step 2: Apply LoRa patches while on compute device
+                # Step 1: Move directly to the final DisTorch destination.  Moving
+                # every block to the compute GPU first defeats CPU/GPU offload and
+                # lets temporary LoRA patch tensors accumulate until the GPU OOMs.
+                module_object.to(block_target_device)
+
+                # Step 2: Apply LoRA patches on the final destination device.
                 weight_key = f"{module_name}.weight"
                 bias_key = f"{module_name}.bias"
 
                 if weight_key in self.patches:
-                    self.patch_weight_to_device(weight_key, device_to=device_to)
+                    self.patch_weight_to_device(weight_key, device_to=block_target_device)
                 if weight_key in self.weight_wrapper_patches:
                     module_object.weight_function.extend(self.weight_wrapper_patches[weight_key])
 
                 if bias_key in self.patches:
-                    self.patch_weight_to_device(bias_key, device_to=device_to)
+                    self.patch_weight_to_device(bias_key, device_to=block_target_device)
                 if bias_key in self.weight_wrapper_patches:
                     module_object.bias_function.extend(self.weight_wrapper_patches[bias_key])
 
                 # Step 3: FP8 casting for CPU storage (if enabled)
-                block_target_device = device_assignments['block_assignments'].get(module_name, device_to)
                 has_patches = weight_key in self.patches or bias_key in self.patches
 
                 if not high_precision_loras and block_target_device == "cpu" and has_patches and model_original_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
@@ -307,10 +329,9 @@ def register_patched_safetensor_modelpatcher():
                             setattr(module_object, param_name, new_param)
                             logger.debug(f"[MultiGPU DisTorch V2] Cast {module_name}.{param_name} to FP8 for CPU storage")
 
-                # Step 4: Move to ultimate destination based on DisTorch assignment
+                # Step 4: Enable runtime casting for blocks stored away from the
+                # compute device.  The module is already on block_target_device.
                 if str(block_target_device) != str(device_to):
-                    logger.debug(f"[MultiGPU DisTorch V2] Moving {module_name} from {device_to} to {block_target_device}")
-                    module_object.to(block_target_device)
                     module_object.comfy_cast_weights = True
 
                 # Mark as patched and update memory counter
@@ -320,6 +341,18 @@ def register_patched_safetensor_modelpatcher():
             self.model.current_weight_patches_uuid = self.patches_uuid
 
             self.model.device = device_to
+
+            # LoRA patching temporarily materializes weights on the compute GPU.
+            # Release allocator cache before the first forward pass so those
+            # temporary buffers do not crowd out WAN activation tensors.
+            cuda_devices = {str(device_to)}
+            cuda_devices.update(str(device) for device in device_assignments['block_assignments'].values())
+            for device_name in cuda_devices:
+                target_device = torch.device(device_name)
+                if target_device.type == "cuda":
+                    with torch.cuda.device(target_device):
+                        torch.cuda.empty_cache()
+                    logger.info(f"[MultiGPU DisTorch V2] Released temporary CUDA cache on {target_device}")
 
             logger.info("[MultiGPU DisTorch V2] DisTorch loading completed.")
             logger.info(f"[MultiGPU DisTorch V2] Total memory: {mem_counter / (1024 * 1024):.2f}MB")

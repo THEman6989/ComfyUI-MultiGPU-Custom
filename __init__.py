@@ -500,10 +500,59 @@ def _initialize_aimdo_visible_cuda_devices():
 
 def _patch_comfy_sample_runtime_device():
     """Wrap Comfy sampling entrypoints so runtime device state matches the model load device."""
+    def is_distorch_model(model):
+        """Find DisTorch annotations through ModelPatcher clones and model wrappers."""
+        pending = [model]
+        visited = set()
+        while pending:
+            current = pending.pop()
+            if current is None or id(current) in visited:
+                continue
+            visited.add(id(current))
+            if hasattr(current, "_distorch_v2_meta") or hasattr(current, "_distorch_block_assignments"):
+                return True
+            for attr in ("model", "patcher", "diffusion_model"):
+                child = getattr(current, attr, None)
+                if child is not None and id(child) not in visited:
+                    pending.append(child)
+        return False
+
+    def wrap_distorch_step_callback(model, args, kwargs, callback_index):
+        if not is_distorch_model(model):
+            logger.warning(
+                f"[MultiGPU DisTorch V2] Sampling model {type(model).__name__} has no reachable "
+                "DisTorch annotation; step cache release not installed"
+            )
+            return args, kwargs
+
+        args = list(args)
+        callback = kwargs.get("callback")
+        callback_in_kwargs = "callback" in kwargs
+        if callback is None and len(args) > callback_index:
+            callback = args[callback_index]
+
+        def callback_with_cache_release(step, x0, x, total_steps):
+            result = callback(step, x0, x, total_steps) if callback is not None else None
+            if step + 1 < total_steps:
+                comfy.model_management.soft_empty_cache(force=True)
+                logger.info(
+                    f"[MultiGPU DisTorch V2] Released CUDA cache after sampling step "
+                    f"{step + 1}/{total_steps}"
+                )
+            return result
+
+        if callback_in_kwargs or len(args) <= callback_index:
+            kwargs = dict(kwargs)
+            kwargs["callback"] = callback_with_cache_release
+        else:
+            args[callback_index] = callback_with_cache_release
+        return tuple(args), kwargs
+
     sample_fn = getattr(comfy_sample, "sample", None)
     if callable(sample_fn) and not getattr(sample_fn, "_multigpu_runtime_device_guard", False):
         def sample_with_runtime_device(model, *args, **kwargs):
             runtime_device = _get_runtime_device_from_model(model)
+            args, kwargs = wrap_distorch_step_callback(model, args, kwargs, callback_index=15)
             with multigpu_runtime_device_guard(runtime_device, reason=f"comfy.sample.sample:{type(model).__name__}"):
                 return sample_fn(model, *args, **kwargs)
 
@@ -516,6 +565,7 @@ def _patch_comfy_sample_runtime_device():
     if callable(sample_custom_fn) and not getattr(sample_custom_fn, "_multigpu_runtime_device_guard", False):
         def sample_custom_with_runtime_device(model, *args, **kwargs):
             runtime_device = _get_runtime_device_from_model(model)
+            args, kwargs = wrap_distorch_step_callback(model, args, kwargs, callback_index=8)
             with multigpu_runtime_device_guard(runtime_device, reason=f"comfy.sample.sample_custom:{type(model).__name__}"):
                 return sample_custom_fn(model, *args, **kwargs)
 
