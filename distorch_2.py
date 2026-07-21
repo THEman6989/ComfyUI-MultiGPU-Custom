@@ -40,9 +40,20 @@ def register_patched_safetensor_modelpatcher():
         original_lora_compute_dtype = lora_compute_dtype
 
         def lora_compute_dtype_cpu_safe(device):
+            # None is a valid ComfyUI sentinel used by force-patching paths.
+            # Preserve the original fallback semantics instead of passing it to
+            # torch.device(), which raises TypeError.
+            if device is None:
+                return original_lora_compute_dtype(device)
+
             target = torch.device(device)
             if target.type == "cpu":
-                return torch.float32
+                # Respect an explicitly configured dtype regardless of whether
+                # callers keyed the cache by the original value or torch.device.
+                configured_dtype = mm.LORA_COMPUTE_DTYPES.get(device)
+                if configured_dtype is None:
+                    configured_dtype = mm.LORA_COMPUTE_DTYPES.get(target)
+                return configured_dtype if configured_dtype is not None else torch.float32
             return original_lora_compute_dtype(device)
 
         setattr(lora_compute_dtype_cpu_safe, "_distorch_cpu_safe", True)
