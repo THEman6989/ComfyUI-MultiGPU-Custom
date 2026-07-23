@@ -10,6 +10,7 @@ from comfy.sd import VAE, CLIP
 from .device_utils import get_device_list, soft_empty_cache_multigpu
 from .model_management_mgpu import multigpu_memory_log
 from .distorch_2 import register_patched_safetensor_modelpatcher
+from .distorch_compat import prepare_distorch_object, mark_distorch_object
 
 logger = logging.getLogger("MultiGPU")
 
@@ -139,10 +140,12 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                 unet_alloc = distorch_config['unet_allocation']
                 if unet_alloc:
                     register_patched_safetensor_modelpatcher()
+                    meta = {"full_allocation": unet_alloc}
+                    model_patcher = prepare_distorch_object(model_patcher)
+                    mark_distorch_object(model_patcher, meta)
                     inner_model = model_patcher.model
-                    inner_model._distorch_v2_meta = {"full_allocation": unet_alloc}
                     logger.info(f"[CHECKPOINT_META] UNET inner_model id=0x{id(inner_model):x}")
-                    model._distorch_high_precision_loras = distorch_config.get('high_precision_loras', True)
+                    inner_model._distorch_high_precision_loras = distorch_config.get('high_precision_loras', True)
 
         if output_vae:
             vae_target_device = torch.device(device_config.get('vae_device', original_main_device))
@@ -201,10 +204,12 @@ def patched_load_state_dict_guess_config(sd, output_vae=True, output_clip=True, 
                         clip_alloc = distorch_config['clip_allocation']
                         if clip_alloc and hasattr(clip, 'patcher'):
                             register_patched_safetensor_modelpatcher()
+                            meta = {"full_allocation": clip_alloc}
+                            clip = prepare_distorch_object(clip)
+                            mark_distorch_object(clip, meta)
                             inner_clip = clip.patcher.model
-                            inner_clip._distorch_v2_meta = {"full_allocation": clip_alloc}
                             logger.info(f"[CHECKPOINT_META] CLIP inner_model id=0x{id(inner_clip):x}")
-                            clip.patcher.model._distorch_high_precision_loras = distorch_config.get('high_precision_loras', True)
+                            inner_clip._distorch_high_precision_loras = distorch_config.get('high_precision_loras', True)
 
                     logger.info("CLIP Loaded.")
                     multigpu_memory_log(f"clip:{config_hash[:8]}", "post-load")

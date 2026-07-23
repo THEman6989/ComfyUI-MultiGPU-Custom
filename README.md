@@ -1,4 +1,6 @@
-# ComfyUI-MultiGPU v2: Universal .safetensors and GGUF Multi-GPU Distribution with DisTorch
+# ComfyUI-MultiGPU-Custom v2: Universal .safetensors and GGUF Multi-GPU Distribution with DisTorch
+
+> Custom fork by [THEman6989](https://github.com/THEman6989), based on the MIT-licensed [pollockjj/ComfyUI-MultiGPU](https://github.com/pollockjj/ComfyUI-MultiGPU). This fork adds branch-local DynamicVRAM controls and DisTorch compatibility fixes.
 <p align="center">
   <img src="https://raw.githubusercontent.com/pollockjj/ComfyUI-MultiGPU/main/assets/distorch_average.png" width="600">
   <br>
@@ -68,7 +70,11 @@ Installation via [ComfyUI-Manager](https://github.com/ltdrdata/ComfyUI-Manager) 
 
 ## Manual Installation
 
-Clone [this repository](https://github.com/pollockjj/ComfyUI-MultiGPU) inside `ComfyUI/custom_nodes/`.
+Clone [this custom fork](https://github.com/THEman6989/ComfyUI-MultiGPU-Custom) inside `ComfyUI/custom_nodes/`:
+
+```bash
+git clone https://github.com/THEman6989/ComfyUI-MultiGPU-Custom.git ComfyUI-MultiGPU-Custom
+```
 
 ## Nodes
 
@@ -296,7 +302,7 @@ All workflows have been tested on a 2x 3090 + 1060ti linux setup, a 4070 win 11 
 
 ## Support
 
-If you encounter problems, please [open an issue](https://github.com/pollockjj/ComfyUI-MultiGPU/issues/new). Attach the workflow if possible.
+If you encounter problems with this custom fork, please [open an issue](https://github.com/THEman6989/ComfyUI-MultiGPU-Custom/issues/new). Attach the workflow if possible.
 
 ## Credits
 

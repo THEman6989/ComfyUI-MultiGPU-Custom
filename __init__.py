@@ -24,6 +24,10 @@ from .model_management_mgpu import (
     multigpu_memory_log as multigpu_memory_log,
     force_full_system_cleanup as force_full_system_cleanup,
 )
+from .dynamic_vram_nodes import (
+    NODE_CLASS_MAPPINGS as DYNAMIC_VRAM_NODE_CLASS_MAPPINGS,
+    NODE_DISPLAY_NAME_MAPPINGS as DYNAMIC_VRAM_NODE_DISPLAY_NAME_MAPPINGS,
+)
 
 WEB_DIRECTORY = "./web"
 MGPU_MM_LOG = False
@@ -742,6 +746,8 @@ NODE_CLASS_MAPPINGS = {
     "DeviceSelectorMultiGPU": DeviceSelectorMultiGPU,
     "UNetLoaderLP": UNetLoaderLP,
 }
+NODE_CLASS_MAPPINGS.update(DYNAMIC_VRAM_NODE_CLASS_MAPPINGS)
+NODE_DISPLAY_NAME_MAPPINGS = dict(DYNAMIC_VRAM_NODE_DISPLAY_NAME_MAPPINGS)
 
 NODE_CLASS_MAPPINGS["UNETLoaderMultiGPU"] = override_class(GLOBAL_NODE_CLASS_MAPPINGS["UNETLoader"])
 NODE_CLASS_MAPPINGS["VAELoaderMultiGPU"] = override_class(GLOBAL_NODE_CLASS_MAPPINGS["VAELoader"])

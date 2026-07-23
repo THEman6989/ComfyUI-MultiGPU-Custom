@@ -7,6 +7,7 @@ import copy
 import hashlib
 import logging
 from .device_utils import get_device_list
+from .distorch_compat import prepare_and_mark_distorch_outputs
 
 logger = logging.getLogger("MultiGPU")
 
@@ -109,16 +110,8 @@ def _create_distorch_safetensor_v2_override(cls, device_param_name, device_sette
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **clean_kwargs)
 
-            model_to_check = None
-            if hasattr(out[0], 'model'):
-                model_to_check = out[0]
-            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_to_check = out[0].patcher
-
-            if model_to_check and full_allocation:
-                meta = {"full_allocation": full_allocation}
-                model_to_check._distorch_v2_meta = meta
-                model_to_check.model._distorch_v2_meta = meta
+            meta = {"full_allocation": full_allocation} if full_allocation else None
+            out = prepare_and_mark_distorch_outputs(out, meta)
 
             logger.info(f"[MultiGPU DisTorch V2] Full allocation string: {full_allocation}")
 
@@ -221,16 +214,8 @@ def override_class_with_distorch_gguf(cls):
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **clean_kwargs)
 
-            model_to_check = None
-            if hasattr(out[0], 'model'):
-                model_to_check = out[0]
-            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_to_check = out[0].patcher
-
-            if model_to_check and full_allocation:
-                meta = {"full_allocation": full_allocation}
-                model_to_check._distorch_v2_meta = meta
-                model_to_check.model._distorch_v2_meta = meta
+            meta = {"full_allocation": full_allocation} if full_allocation else None
+            out = prepare_and_mark_distorch_outputs(out, meta)
             try:
                 return out
             finally:
@@ -287,16 +272,8 @@ def override_class_with_distorch_gguf_v2(cls):
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **clean_kwargs)
 
-            model_to_check = None
-            if hasattr(out[0], 'model'):
-                model_to_check = out[0]
-            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_to_check = out[0].patcher
-
-            if model_to_check and full_allocation:
-                meta = {"full_allocation": full_allocation}
-                model_to_check._distorch_v2_meta = meta
-                model_to_check.model._distorch_v2_meta = meta
+            meta = {"full_allocation": full_allocation} if full_allocation else None
+            out = prepare_and_mark_distorch_outputs(out, meta)
             try:
                 return out
             finally:
@@ -355,16 +332,8 @@ def override_class_with_distorch_clip(cls):
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **clean_kwargs)
 
-            model_to_check = None
-            if hasattr(out[0], 'model'):
-                model_to_check = out[0]
-            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_to_check = out[0].patcher
-
-            if model_to_check and full_allocation:
-                meta = {"full_allocation": full_allocation}
-                model_to_check._distorch_v2_meta = meta
-                model_to_check.model._distorch_v2_meta = meta
+            meta = {"full_allocation": full_allocation} if full_allocation else None
+            out = prepare_and_mark_distorch_outputs(out, meta)
             try:
                 return out
             finally:
@@ -423,16 +392,8 @@ def override_class_with_distorch_clip_no_device(cls):
             fn = getattr(super(), cls.FUNCTION)
             out = fn(*args, **clean_kwargs)
 
-            model_to_check = None
-            if hasattr(out[0], 'model'):
-                model_to_check = out[0]
-            elif hasattr(out[0], 'patcher') and hasattr(out[0].patcher, 'model'):
-                model_to_check = out[0].patcher
-
-            if model_to_check and full_allocation:
-                meta = {"full_allocation": full_allocation}
-                model_to_check._distorch_v2_meta = meta
-                model_to_check.model._distorch_v2_meta = meta
+            meta = {"full_allocation": full_allocation} if full_allocation else None
+            out = prepare_and_mark_distorch_outputs(out, meta)
             try:
                 return out
             finally:

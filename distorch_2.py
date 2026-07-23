@@ -13,6 +13,7 @@ import comfy.model_management as mm
 import comfy.model_patcher
 from .device_utils import get_device_list
 from .model_management_mgpu import multigpu_memory_log
+from .distorch_compat import is_distorch_object
 
 
 
@@ -63,10 +64,22 @@ def register_patched_safetensor_modelpatcher():
 
     # Patch ComfyUI's ModelPatcher
     if not hasattr(comfy.model_patcher.ModelPatcher, '_distorch_patched'):
+        original_load_models_gpu = mm.load_models_gpu
 
 
         # PATCH load_models_gpu with correct memory calculations per model flags
         def patched_load_models_gpu(models, memory_required=0, force_patch_weights=False, minimum_memory_required=None, force_full_load=False):
+            # Preserve ComfyUI's exact DynamicVRAM path when this call contains
+            # no DisTorch object. The custom accounting below is needed only for
+            # virtual allocations and must not alter ordinary loader semantics.
+            if not any(is_distorch_object(model) for model in models):
+                return original_load_models_gpu(
+                    models,
+                    memory_required=memory_required,
+                    force_patch_weights=force_patch_weights,
+                    minimum_memory_required=minimum_memory_required,
+                    force_full_load=force_full_load,
+                )
             from comfy.model_management import cleanup_models_gc, get_free_memory, free_memory, current_loaded_models
             from comfy.model_management import VRAMState, vram_state, lowvram_available, MIN_WEIGHT_MEMORY_RATIO
             from comfy.model_management import minimum_inference_memory, extra_reserved_memory, is_device_cpu
@@ -84,9 +97,9 @@ def register_patched_safetensor_modelpatcher():
             else:
                 minimum_memory_required = max(inference_memory, minimum_memory_required + extra_reserved_mem)
 
-            models_temp = set()
+            models_temp = {}
             for m in models:
-                models_temp.add(m)
+                models_temp[m] = None
                 model_type = type(m).__name__
 
                 if ("GGUF" in model_type or "ModelPatcher" in model_type) and hasattr(m, "model_patches_to") and not hasattr(m, "model_patches_models"):
@@ -98,17 +111,18 @@ def register_patched_safetensor_modelpatcher():
                         logger.debug(f"[MultiGPU DisTorch V2] Found {len(patches)} mm_patch(es) for {type(m).__name__} on device {target_device}")
                         for mm_patch in patches:
                             logger.debug(f"[MultiGPU DisTorch V2] Registering mm_patch: {type(mm_patch).__name__}")
-                            models_temp.add(mm_patch)
+                            models_temp[mm_patch] = None
                     continue
 
                 for mm_patch in m.model_patches_models():
-                    models_temp.add(mm_patch)
+                    models_temp[mm_patch] = None
                 patches = m.model_patches_to(m.load_device)
                 if patches:
                     for mm_patch in patches:
-                        models_temp.add(mm_patch)
+                        models_temp[mm_patch] = None
 
-            models = models_temp
+            models = list(models_temp)
+            models.reverse()
 
             models_to_load = []
 
