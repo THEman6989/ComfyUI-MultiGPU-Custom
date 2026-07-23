@@ -14,16 +14,12 @@ import comfy.model_patcher
 from .device_utils import get_device_list
 from .model_management_mgpu import multigpu_memory_log
 from .distorch_compat import is_distorch_object
-
-
-
-def unpack_load_item(item):
-    """Handle ComfyUI 0.6.0+ 5-tuple vs legacy 4-tuple"""
-    if len(item) == 5:
-        # (module_offload_mem, module_mem, module_name, module_object, params)
-        return item[1], item[2], item[3], item[4]
-    # (module_mem, module_name, module_object, params)
-    return item[0], item[1], item[2], item[3]
+from .distorch_memory import (
+    get_compute_dtype,
+    move_module_to,
+    total_load_memory,
+    unpack_load_item,
+)
 
 
 
@@ -298,7 +294,17 @@ def register_patched_safetensor_modelpatcher():
                 self._distorch_cached_assignments = device_assignments
                 self._distorch_last_allocations = allocations
 
-            model_original_dtype = comfy.utils.weight_dtype(self.model.state_dict())
+            # Quantized storage dtypes (INT8/INT4) are not valid compute dtypes
+            # for float bias/LoRA tensors. Prefer ComfyUI's manual cast dtype,
+            # then the dominant floating dtype in the state dict.
+            model_state_dict = self.model.state_dict()
+            model_compute_dtype = get_compute_dtype(self.model, model_state_dict)
+            model_storage_dtype = comfy.utils.weight_dtype(model_state_dict)
+            logger.debug(
+                "[MultiGPU DisTorch V2] Model storage dtype=%s, compute dtype=%s",
+                model_storage_dtype,
+                model_compute_dtype,
+            )
             high_precision_loras = getattr(self.model, "_distorch_high_precision_loras", True)
             # Use standard ComfyUI load list - the device comparison fix ensures we don't crash
             loading = self._load_list()
@@ -316,7 +322,7 @@ def register_patched_safetensor_modelpatcher():
 
                     if current_module_device is not None and str(current_module_device) != str(block_target_device):
                         logger.debug(f"[MultiGPU DisTorch V2] Moving already patched {module_name} to {block_target_device}")
-                        module_object.to(block_target_device)
+                        move_module_to(module_object, block_target_device)
 
                     mem_counter += module_size
                     continue
@@ -326,7 +332,7 @@ def register_patched_safetensor_modelpatcher():
                 # Step 1: Move directly to the final DisTorch destination.  Moving
                 # every block to the compute GPU first defeats CPU/GPU offload and
                 # lets temporary LoRA patch tensors accumulate until the GPU OOMs.
-                module_object.to(block_target_device)
+                move_module_to(module_object, block_target_device)
 
                 # Step 2: Apply LoRA patches on the final destination device.
                 weight_key = f"{module_name}.weight"
@@ -345,7 +351,7 @@ def register_patched_safetensor_modelpatcher():
                 # Step 3: FP8 casting for CPU storage (if enabled)
                 has_patches = weight_key in self.patches or bias_key in self.patches
 
-                if not high_precision_loras and block_target_device == "cpu" and has_patches and model_original_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
+                if not high_precision_loras and block_target_device == "cpu" and has_patches and model_storage_dtype in [torch.float8_e4m3fn, torch.float8_e5m2]:
                     for param_name, param in module_object.named_parameters():
                         if param.dtype.is_floating_point:
                             cast_data = comfy.float.stochastic_rounding(param.data, torch.float8_e4m3fn)
@@ -802,16 +808,10 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
 
     logger.info(dash_line)
 
-    # Calculate model size
-    model = model_patcher.model if hasattr(model_patcher, 'model') else model_patcher
-    total_memory = 0
-
-    for name, module in model.named_modules():
-        if hasattr(module, "weight"):
-            if module.weight is not None:
-                total_memory += module.weight.numel() * module.weight.element_size()
-            if hasattr(module, "bias") and module.bias is not None:
-                total_memory += module.bias.numel() * module.bias.element_size()
+    # Use the same ComfyUI effective-memory metric as block distribution.
+    # For quantized/manual-cast modules this includes temporary compute memory;
+    # legacy load-list entries fall back to their stored module size.
+    total_memory = total_load_memory(model_patcher._load_list())
 
     model_size_gb = total_memory / (1024**3)
     new_model_size_gb = max(0, model_size_gb - virtual_vram_gb)
