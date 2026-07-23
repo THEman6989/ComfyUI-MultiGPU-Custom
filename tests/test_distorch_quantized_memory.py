@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import sys
 
 import torch
 
@@ -13,6 +14,7 @@ def load_module():
     spec = importlib.util.spec_from_file_location("distorch_memory_test", MODULE_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -113,29 +115,21 @@ def test_device_move_still_moves_integer_only_module_without_dtype_cast():
     assert value.calls == [((), {"device": target})]
 
 
-def test_unpack_load_item_uses_core_offload_memory_with_zero_fallback():
+def test_normalize_load_item_preserves_resident_and_transient_memory():
     module = load_module()
     block = object()
     params = {"weight": object()}
 
+    record = module.normalize_load_item((240, 100, "block", block, params))
+    assert record.module_mem == 100
+    assert record.module_offload_mem == 240
     assert module.unpack_load_item((240, 100, "block", block, params)) == (
-        240,
-        "block",
-        block,
-        params,
+        100, "block", block, params
     )
-    assert module.unpack_load_item((0, 100, "block", block, params)) == (
-        100,
-        "block",
-        block,
-        params,
-    )
-    assert module.unpack_load_item((50, 100, "block", block, params)) == (
-        100,
-        "block",
-        block,
-        params,
-    )
+
+    legacy = module.normalize_load_item((100, "block", block, params))
+    assert legacy.module_mem == 100
+    assert legacy.module_offload_mem == 100
     assert module.unpack_load_item((100, "block", block, params)) == (
         100,
         "block",
@@ -144,17 +138,28 @@ def test_unpack_load_item_uses_core_offload_memory_with_zero_fallback():
     )
 
 
-def test_total_load_memory_uses_same_effective_values_as_distribution():
+def test_resident_total_and_transient_headroom_remain_separate():
     module = load_module()
     block = object()
     params = {}
     loading = [
         (240, 100, "quantized", block, params),
-        (0, 50, "fallback", block, params),
+        (90, 50, "patched", block, params),
         (25, "legacy", block, params),
     ]
 
-    assert module.total_load_memory(loading) == 315
+    assert module.total_resident_memory(loading) == 175
+    assert module.transient_headroom(loading) == 240
+
+
+def test_unsupported_load_item_shape_fails_clearly():
+    module = load_module()
+    try:
+        module.normalize_load_item((1, 2, 3))
+    except ValueError as error:
+        assert "3 fields" in str(error)
+    else:
+        raise AssertionError("unsupported tuple shape was accepted")
 
 
 def main():
@@ -165,8 +170,9 @@ def main():
         test_device_move_preserves_tensor_dtypes_without_global_cast,
         test_device_move_does_not_flatten_mixed_parameter_dtypes,
         test_device_move_still_moves_integer_only_module_without_dtype_cast,
-        test_unpack_load_item_uses_core_offload_memory_with_zero_fallback,
-        test_total_load_memory_uses_same_effective_values_as_distribution,
+        test_normalize_load_item_preserves_resident_and_transient_memory,
+        test_resident_total_and_transient_headroom_remain_separate,
+        test_unsupported_load_item_shape_fails_clearly,
     ]
     for test in tests:
         test()

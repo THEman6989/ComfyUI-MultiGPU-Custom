@@ -56,7 +56,7 @@ Works with all .safetensors and GGUF-quantized models.
 
 On current ComfyUI builds with DynamicVRAM/comfy-aimdo enabled, ordinary loaders keep ComfyUI's DynamicVRAM behavior while DisTorch2 loader outputs use branch-local legacy patchers. This avoids a global `ModelPatcherDynamic.load()` override and preserves MultiGPU placement for devices such as `cuda:1`.
 
-For INT8 and other quantized/manual-cast models, DisTorch2 keeps storage dtype separate from compute dtype, performs device-only moves so mixed INT8/FP16/BF16/FP32 tensors retain their individual dtypes, and uses ComfyUI's `module_offload_mem` estimate for both block distribution and Virtual VRAM sizing. Legacy load-list entries retain their stored-size fallback.
+For INT8 and other quantized/manual-cast models, DisTorch2 keeps storage dtype separate from compute dtype and performs device-only moves so mixed INT8/FP16/BF16/FP32 tensors retain their individual dtypes. Static block distribution and Virtual VRAM use resident `module_mem`; ComfyUI's full per-module `module_offload_mem` buffer is retained separately as peak transient headroom rather than incorrectly summed as donor-device residency. Legacy load-list entries remain supported.
 
 ⚙️ Expert users: Like .gguf or exl2/3 LLM loaders, use the expert_mode_alloaction for exact allocations of model shards on as many devices as your setup has!
 

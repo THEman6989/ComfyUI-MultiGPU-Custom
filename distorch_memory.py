@@ -3,9 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import torch
+
+
+@dataclass(frozen=True)
+class LoadItem:
+    """Normalized ComfyUI load-list entry with resident and transient memory kept separate."""
+
+    module_mem: int | float
+    module_offload_mem: int | float
+    module_name: str
+    module: Any
+    params: Any
 
 
 def _is_floating_dtype(dtype: Any) -> bool:
@@ -35,21 +47,28 @@ def move_module_to(module: Any, device: Any) -> Any:
     return module.to(device=device)
 
 
-def unpack_load_item(item):
-    """Return effective memory and payload for current or legacy ComfyUI load-list entries."""
+def normalize_load_item(item) -> LoadItem:
+    """Normalize current or legacy ComfyUI load-list entries without conflating memory roles."""
     if len(item) == 5:
         module_offload_mem, module_mem, module_name, module_object, params = item
-        effective_mem = (
-            max(module_offload_mem, module_mem)
-            if isinstance(module_offload_mem, (int, float))
-            else module_mem
-        )
-        return effective_mem, module_name, module_object, params
+        return LoadItem(module_mem, module_offload_mem, module_name, module_object, params)
     if len(item) == 4:
-        return item[0], item[1], item[2], item[3]
+        module_mem, module_name, module_object, params = item
+        return LoadItem(module_mem, module_mem, module_name, module_object, params)
     raise ValueError(f"Unsupported ComfyUI load-list entry with {len(item)} fields")
 
 
-def total_load_memory(loading: Iterable) -> int | float:
-    """Sum the exact effective memory values used for DisTorch block distribution."""
-    return sum(unpack_load_item(item)[0] for item in loading)
+def unpack_load_item(item):
+    """Return resident module bytes and payload for static DisTorch placement."""
+    record = normalize_load_item(item)
+    return record.module_mem, record.module_name, record.module, record.params
+
+
+def total_resident_memory(loading: Iterable) -> int | float:
+    """Sum bytes that remain resident across static DisTorch target devices."""
+    return sum(normalize_load_item(item).module_mem for item in loading)
+
+
+def transient_headroom(loading: Iterable) -> int | float:
+    """Return ComfyUI's peak per-module offload buffer, not cumulative residency."""
+    return max((normalize_load_item(item).module_offload_mem for item in loading), default=0)

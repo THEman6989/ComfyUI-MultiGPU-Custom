@@ -17,7 +17,8 @@ from .distorch_compat import is_distorch_object
 from .distorch_memory import (
     get_compute_dtype,
     move_module_to,
-    total_load_memory,
+    total_resident_memory,
+    transient_headroom,
     unpack_load_item,
 )
 
@@ -503,10 +504,12 @@ def analyze_safetensor_loading(model_patcher, allocations_string, is_clip=False)
     total_memory = 0
 
     raw_block_list = model_patcher._load_list()
-    total_memory = sum(unpack_load_item(x)[0] for x in raw_block_list)
+    total_memory = total_resident_memory(raw_block_list)
+    peak_transient_memory = transient_headroom(raw_block_list)
 
     MIN_BLOCK_THRESHOLD = total_memory * 0.0001
-    logger.debug(f"[MultiGPU DisTorch V2] Total model memory: {total_memory} bytes")
+    logger.debug(f"[MultiGPU DisTorch V2] Total resident model memory: {total_memory} bytes")
+    logger.debug(f"[MultiGPU DisTorch V2] Peak transient cast/dequant headroom: {peak_transient_memory} bytes")
     logger.debug(f"[MultiGPU DisTorch V2] Tiny block threshold (0.01%): {MIN_BLOCK_THRESHOLD} bytes")
 
     # CLIP-specific: Extract head blocks and get pre-assignments
@@ -661,7 +664,7 @@ def parse_memory_string(mem_str):
 def calculate_fraction_from_byte_expert_string(model_patcher, byte_str):
     """Convert byte allocation string (e.g. 'cuda:1,4gb;cpu,*') to fractional VRAM allocation string respecting device order and byte quotas."""
     raw_block_list = model_patcher._load_list()
-    total_model_memory = sum(unpack_load_item(x)[0] for x in raw_block_list)
+    total_model_memory = total_resident_memory(raw_block_list)
     remaining_model_bytes = total_model_memory
 
     # Use a list of tuples to preserve the user-defined order
@@ -720,7 +723,7 @@ def calculate_fraction_from_byte_expert_string(model_patcher, byte_str):
 def calculate_fraction_from_ratio_expert_string(model_patcher, ratio_str):
     """Convert ratio allocation string (e.g. 'cuda:0,25%;cpu,75%') describing model split to fractional VRAM allocation string."""
     raw_block_list = model_patcher._load_list()
-    total_model_memory = sum(unpack_load_item(x)[0] for x in raw_block_list)
+    total_model_memory = total_resident_memory(raw_block_list)
 
     raw_ratios = {}
     for allocation in ratio_str.split(';'):
@@ -808,10 +811,10 @@ def calculate_safetensor_vvram_allocation(model_patcher, virtual_vram_str):
 
     logger.info(dash_line)
 
-    # Use the same ComfyUI effective-memory metric as block distribution.
-    # For quantized/manual-cast modules this includes temporary compute memory;
-    # legacy load-list entries fall back to their stored module size.
-    total_memory = total_load_memory(model_patcher._load_list())
+    # Virtual VRAM represents resident model bytes moved away from the recipient.
+    # Temporary cast/dequant/LoRA workspace is tracked separately and must not be
+    # summed as if it remained resident on donor devices.
+    total_memory = total_resident_memory(model_patcher._load_list())
 
     model_size_gb = total_memory / (1024**3)
     new_model_size_gb = max(0, model_size_gb - virtual_vram_gb)
